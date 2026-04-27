@@ -1,0 +1,78 @@
+<!--
+  ============================================================================
+   NetWatchdog - WinSW Service Descriptor
+   Este XML configura WinSW para ejecutar el Core Service como servicio
+   de Windows bajo NT AUTHORITY\SYSTEM en modo automático.
+  ============================================================================
+  
+  INSTRUCCIONES DE USO:
+   1. Descargar WinSW desde: https://github.com/winsw/winsw/releases
+   2. Renombrar el .exe descargado a: watchdog-service.exe
+   3. Colocar este XML junto al .exe y al .jar del servicio.
+   4. Ejecutar install-service.bat como Administrador.
+  ============================================================================
+-->
+<service>
+  <!-- ID único del servicio en Windows -->
+  <id>NetWatchdogService</id>
+  
+  <!-- Nombre visible en services.msc -->
+  <name>NetWatchdog - Auto Recovery Agent</name>
+  
+  <!-- Descripción del servicio -->
+  <description>
+    Servicio de monitoreo autónomo que valida la conectividad de red
+    y la sincronización horaria del servidor Windows. Ejecuta acciones
+    de recuperación automáticas (reinicio de adaptador, resync NTP)
+    cuando detecta fallos.
+  </description>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       EJECUCIÓN: Ruta al JRE/JDK y al JAR del servicio
+       Ajustar la ruta de Java según la instalación del servidor.
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <executable>java</executable>
+  <arguments>-jar "%BASE%\watchdog-service.jar"</arguments>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       MODO DE INICIO: Automatic = arranca con Windows
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <startmode>Automatic</startmode>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       CUENTA DE SERVICIO: SYSTEM para permisos elevados en Sesión 0
+       Necesario para:
+         - Restart-NetAdapter (reiniciar interfaces físicas/virtuales)
+         - w32tm /resync (forzar sincronización de tiempo)
+         - Acceso a C:\ProgramData sin restricciones
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <serviceaccount>
+    <username>NT AUTHORITY\SYSTEM</username>
+  </serviceaccount>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       LOGS DE WINSW (separados de watchdog.log del servicio)
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+  <logpath>C:\ProgramData\NetWatchdog\winsw-logs</logpath>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       POLÍTICA DE REINICIO ante fallos inesperados
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <onfailure action="restart" delay="10 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <onfailure action="none" />
+  <resetfailure>1 hour</resetfailure>
+
+  <!-- Directorio de trabajo -->
+  <workingdirectory>C:\ProgramData\NetWatchdog</workingdirectory>
+
+  <!-- Prioridad del proceso -->
+  <priority>Normal</priority>
+
+  <!-- Tiempo de gracia para detención limpia -->
+  <stoptimeout>15 sec</stoptimeout>
+</service>

@@ -1,0 +1,7 @@
+# NetWatchdog - Configuración por defecto
+# Editado por la GUI o manualmente.
+# El servicio recarga este archivo en cada ciclo.
+
+TargetDomain=activa.local
+AdapterName=Ethernet
+CheckIntervalSeconds=30

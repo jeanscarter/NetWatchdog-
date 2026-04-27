@@ -1,0 +1,30 @@
+# Entornos de desarrollo / IDEs
+.vscode/
+.eclipse/
+.project
+.classpath
+.settings/
+
+# Archivos compilados de Java
+*.class
+bin/
+build/
+
+# Artefactos empaquetados
+*.jar
+*.war
+*.ear
+
+# Archivos de registro y temporales
+*.log
+*.tmp
+*.bak
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Configuraciones locales (se debe usar config.properties.example como plantilla)
+config.properties
+C:/ProgramData/NetWatchdog/
