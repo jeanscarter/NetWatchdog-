@@ -44,6 +44,7 @@ public class WatchdogGUI extends JFrame {
     private JButton btnStartSvc;
     private JButton btnStopSvc;
     private JButton btnInstallSvc;
+    private JButton btnUninstallSvc;
     private JLabel lblMemGUI;
     private JLabel lblMemSvc;
     private javax.swing.Timer logTimer;
@@ -222,12 +223,16 @@ public class WatchdogGUI extends JFrame {
 
         btnInstallSvc = makeSmallButton("⚙ Instalar Servicio");
         btnInstallSvc.addActionListener(e -> installService());
+
+        btnUninstallSvc = makeSmallButton("🗑 Desinstalar");
+        btnUninstallSvc.addActionListener(e -> uninstallService());
         
         card.add(makeLabel("NetWatchdogService:"));
         card.add(serviceStatusLabel);
         card.add(btnStartSvc);
         card.add(btnStopSvc);
         card.add(btnInstallSvc);
+        card.add(btnUninstallSvc);
         
         // Timer to check status periodically
         javax.swing.Timer t = new javax.swing.Timer(3000, e -> checkServiceStatus());
@@ -260,18 +265,21 @@ public class WatchdogGUI extends JFrame {
                         btnStartSvc.setVisible(false);
                         btnStopSvc.setVisible(true);
                         btnInstallSvc.setVisible(false);
+                        btnUninstallSvc.setVisible(true);
                     } else if ("Stopped".equalsIgnoreCase(st)) {
                         serviceStatusLabel.setText("DETENIDO");
                         serviceStatusLabel.setForeground(Color.ORANGE);
                         btnStartSvc.setVisible(true);
                         btnStopSvc.setVisible(false);
                         btnInstallSvc.setVisible(false);
+                        btnUninstallSvc.setVisible(true);
                     } else {
                         serviceStatusLabel.setText("NO INSTALADO / DESCONOCIDO");
                         serviceStatusLabel.setForeground(Color.RED);
                         btnStartSvc.setVisible(false);
                         btnStopSvc.setVisible(false);
                         btnInstallSvc.setVisible(true);
+                        btnUninstallSvc.setVisible(false);
                     }
                 } catch (Exception e) {}
             }
@@ -306,6 +314,50 @@ public class WatchdogGUI extends JFrame {
             t.start();
         } catch (Exception ex) {
             LightweightToast.show(this, "Error: " + ex.getMessage(), Color.RED);
+        }
+    }
+
+    private void uninstallService() {
+        int confirm = JOptionPane.showConfirmDialog(this, 
+            "¿Está seguro de que desea desinstalar COMPLETAMENTE el sistema?\n\n" +
+            "Esto hará lo siguiente:\n" +
+            "1. Detener el servicio y matar procesos residuales\n" +
+            "2. Eliminar el servicio de Windows\n" +
+            "3. BORRAR permanentemente la carpeta C:\\ProgramData\\NetWatchdog", 
+            "Desinstalación Completa", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        try {
+            // Creamos un script temporal en PowerShell para una desinstalación más robusta
+            Path tempScript = Files.createTempFile("netwatchdog_uninstall_", ".ps1");
+            String baseDir = "C:\\ProgramData\\NetWatchdog";
+            
+            String ps1Content = 
+                "Stop-Service NetWatchdogService -ErrorAction SilentlyContinue\n" +
+                "if (Test-Path '" + baseDir + "\\watchdog-service.exe') {\n" +
+                "    & '" + baseDir + "\\watchdog-service.exe' uninstall\n" +
+                "}\n" +
+                "sc.exe delete NetWatchdogService\n" +
+                "Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -match 'watchdog-service.jar' } | ForEach-Object { $_.Terminate() }\n" +
+                "Start-Sleep -Seconds 2\n" +
+                "Remove-Item -Path '" + baseDir + "' -Recurse -Force -ErrorAction SilentlyContinue\n" +
+                "Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue\n";
+            
+            Files.writeString(tempScript, ps1Content, StandardCharsets.UTF_8);
+
+            String scriptCmd = "Start-Process powershell -Verb runAs -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '\"" + tempScript.toAbsolutePath() + "\"'";
+            new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", scriptCmd).start();
+            
+            javax.swing.Timer t = new javax.swing.Timer(4000, e -> {
+                checkServiceStatus();
+                LightweightToast.show(this, "Sistema desinstalado y archivos eliminados", Color.ORANGE);
+            });
+            t.setRepeats(false);
+            t.start();
+            
+        } catch (Exception ex) {
+            LightweightToast.show(this, "Error desinstalando: " + ex.getMessage(), Color.RED);
         }
     }
 
