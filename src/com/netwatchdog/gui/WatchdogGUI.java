@@ -287,19 +287,167 @@ public class WatchdogGUI extends JFrame {
         worker.execute();
     }
 
+    /**
+     * Resuelve la ruta de install-service.bat buscando en múltiples ubicaciones:
+     * 1. Relativo a la ubicación del JAR en ejecución (mismo directorio)
+     * 2. user.dir/deploy/
+     * 3. C:\ProgramData\NetWatchdog\
+     */
+    private Path resolveInstallBat() {
+        // 1. Relativo al JAR en ejecución (más confiable)
+        try {
+            Path jarDir = Paths.get(
+                WatchdogGUI.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+            ).getParent();
+            // Si el JAR está en deploy/, el .bat está al lado
+            Path candidate = jarDir.resolve("install-service.bat");
+            if (Files.exists(candidate)) return candidate;
+            // Si el JAR está en la raíz del proyecto, buscar en deploy/
+            candidate = jarDir.resolve("deploy").resolve("install-service.bat");
+            if (Files.exists(candidate)) return candidate;
+        } catch (Exception ignored) {}
+
+        // 2. Relativo al directorio de trabajo actual
+        Path fromCwd = Paths.get(System.getProperty("user.dir"), "deploy", "install-service.bat");
+        if (Files.exists(fromCwd)) return fromCwd;
+
+        // 3. Ubicación de instalación conocida
+        Path fromProgramData = Paths.get("C:\\ProgramData\\NetWatchdog\\install-service.bat");
+        if (Files.exists(fromProgramData)) return fromProgramData;
+
+        return null; // No encontrado
+    }
+
     private void installService() {
         try {
-            Path batPath = Paths.get(System.getProperty("user.dir"), "deploy", "install-service.bat");
-            if (!Files.exists(batPath)) {
-                LightweightToast.show(this, "No se encontró deploy/install-service.bat", Color.RED);
+            Path batPath = resolveInstallBat();
+            if (batPath == null) {
+                LightweightToast.show(this, "No se encontró install-service.bat — verifique la carpeta deploy/", Color.RED);
                 return;
             }
-            String script = "Start-Process cmd -Verb runAs -ArgumentList '/c', '\"" + batPath.toAbsolutePath().toString() + "\"'";
-            new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", script).start();
-            javax.swing.Timer t = new javax.swing.Timer(5000, e -> checkServiceStatus());
-            t.setRepeats(false);
-            t.start();
+
+            btnInstallSvc.setEnabled(false);
+            btnInstallSvc.setText("Instalando...");
+
+            // Crear un script PowerShell temporal que:
+            // 1. Ejecuta el .bat como administrador con -Wait
+            // 2. Captura la salida a un archivo temporal para diagnóstico
+            Path logFile = Files.createTempFile("netwatchdog_install_", ".log");
+            Path ps1File = Files.createTempFile("netwatchdog_install_", ".ps1");
+
+
+            String batDir = batPath.toAbsolutePath().getParent().toString();
+
+            // Workaround para unidades de red mapeadas (ej. Z:\):
+            // La sesión de Administrador elevada no ve las unidades mapeadas del usuario.
+            // Copiamos los archivos a un directorio local temporal en C:\
+            Path tempDeployDir = Files.createTempDirectory("netwatchdog_deploy_");
+            String[] filesToCopy = {"install-service.bat", "watchdog-service.jar", "watchdog-service.exe", "watchdog-service.xml"};
+            for (String f : filesToCopy) {
+                Path source = Paths.get(batDir, f);
+                if (Files.exists(source)) {
+                    Files.copy(source, tempDeployDir.resolve(f), StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+
+            String localBatAbsolute = tempDeployDir.resolve("install-service.bat").toAbsolutePath().toString();
+            String localBatDir = tempDeployDir.toAbsolutePath().toString();
+
+            // Script PS1 que se ejecutará ELEVADO:
+            // Redirige la salida del .bat a un archivo de log para diagnóstico
+            String ps1Content =
+                "Set-Location '" + localBatDir + "'\n" +
+                "try {\n" +
+                "    & '" + localBatAbsolute + "' /silent *> '" + logFile.toAbsolutePath() + "' 2>&1\n" +
+                "    $exitCode = $LASTEXITCODE\n" +
+                "    Add-Content -Path '" + logFile.toAbsolutePath() + "' -Value \"`nEXIT_CODE=$exitCode\"\n" +
+                "} catch {\n" +
+                "    Add-Content -Path '" + logFile.toAbsolutePath() + "' -Value \"ERROR: $_\"\n" +
+                "}\n";
+
+            Files.writeString(ps1File, ps1Content, StandardCharsets.UTF_8);
+
+            // Lanzar el script .ps1 elevado con -Wait para que no retorne hasta completar
+            String launchCmd = "Start-Process powershell -Verb runAs -Wait -WindowStyle Hidden " +
+                "-ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '\"" +
+                ps1File.toAbsolutePath() + "\"'";
+
+            SwingWorker<String, Void> worker = new SwingWorker<>() {
+                @Override
+                protected String doInBackground() {
+                    try {
+                        Process proc = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", launchCmd).start();
+                        // Esperar a que el proceso elevado termine (el -Wait en Start-Process hace que
+                        // el powershell padre no retorne hasta que el hijo termine)
+                        proc.waitFor();
+
+                        // Pequeña pausa para asegurar que el archivo de log se haya escrito
+                        Thread.sleep(1500);
+
+                        // Leer el log de salida
+                        if (Files.exists(logFile)) {
+                            byte[] bytes = Files.readAllBytes(logFile);
+                            String output;
+                            if (bytes.length >= 2 && bytes[0] == (byte)0xFF && bytes[1] == (byte)0xFE) {
+                                output = new String(bytes, 2, bytes.length - 2, StandardCharsets.UTF_16LE);
+                            } else {
+                                output = new String(bytes, java.nio.charset.Charset.defaultCharset());
+                            }
+                            // Limpiar archivos temporales
+                            Files.deleteIfExists(logFile);
+                            Files.deleteIfExists(ps1File);
+                            return output;
+                        }
+                        Files.deleteIfExists(ps1File);
+                        return "NO_LOG";
+                    } catch (Exception e) {
+                        return "EXCEPTION: " + e.getMessage();
+                    }
+                }
+
+                @Override
+                protected void done() {
+                    btnInstallSvc.setEnabled(true);
+                    btnInstallSvc.setText("⚙ Instalar Servicio");
+                    try {
+                        String result = get();
+                        if (result.equals("NO_LOG")) {
+                            // El usuario probablemente canceló el UAC
+                            LightweightToast.show(WatchdogGUI.this,
+                                "Instalación cancelada o sin respuesta del UAC", Color.ORANGE);
+                        } else if (result.startsWith("EXCEPTION:")) {
+                            LightweightToast.show(WatchdogGUI.this,
+                                "Error: " + result, Color.RED);
+                        } else if (result.contains("EXIT_CODE=0") || result.contains("INSTALACIÓN COMPLETADA")) {
+                            LightweightToast.show(WatchdogGUI.this,
+                                "Servicio instalado correctamente ✓", SUCCESS);
+                        } else {
+                            // Mostrar las últimas líneas del log para diagnóstico
+                            String[] lines = result.split("\n");
+                            StringBuilder summary = new StringBuilder();
+                            int start = Math.max(0, lines.length - 5);
+                            for (int i = start; i < lines.length; i++) {
+                                String line = lines[i].trim();
+                                if (!line.isEmpty()) {
+                                    summary.append(line).append(" | ");
+                                }
+                            }
+                            LightweightToast.show(WatchdogGUI.this,
+                                "Posible error: " + summary, Color.ORANGE);
+                            // También escribir al log area para diagnóstico completo
+                            logArea.append("\n--- INSTALL LOG ---\n" + result + "\n--- END ---\n");
+                        }
+                    } catch (Exception ex) {
+                        LightweightToast.show(WatchdogGUI.this,
+                            "Error verificando instalación: " + ex.getMessage(), Color.RED);
+                    }
+                    checkServiceStatus();
+                }
+            };
+            worker.execute();
         } catch (Exception ex) {
+            btnInstallSvc.setEnabled(true);
+            btnInstallSvc.setText("⚙ Instalar Servicio");
             LightweightToast.show(this, "Error instalando: " + ex.getMessage(), Color.RED);
         }
     }

@@ -5,6 +5,10 @@ REM  EJECUTAR COMO ADMINISTRADOR
 REM ============================================================================
 setlocal
 
+REM ─── Modo silencioso (invocado desde la GUI) ────────────────────────────
+set "SILENT=0"
+if /i "%~1"=="/silent" set "SILENT=1"
+
 echo.
 echo  ╔══════════════════════════════════════════════════════════════╗
 echo  ║       NetWatchdog - Instalador del Servicio Windows         ║
@@ -17,7 +21,7 @@ if %errorlevel% neq 0 (
     echo  [ERROR] Este script requiere permisos de Administrador.
     echo  Haga clic derecho en el archivo y seleccione "Ejecutar como administrador".
     echo.
-    pause
+    if "%SILENT%"=="0" pause
     exit /b 1
 )
 
@@ -36,18 +40,18 @@ if not exist "%SCRIPT_DIR%watchdog-service.exe" (
     echo  [ERROR] No se encontró watchdog-service.exe
     echo  Descargue WinSW desde: https://github.com/winsw/winsw/releases
     echo  Renombre el .exe a: watchdog-service.exe
-    pause
+    if "%SILENT%"=="0" pause
     exit /b 1
 )
 if not exist "%SCRIPT_DIR%watchdog-service.jar" (
     echo  [ERROR] No se encontró watchdog-service.jar
     echo  Compile el servicio primero con build-service.bat
-    pause
+    if "%SILENT%"=="0" pause
     exit /b 1
 )
 if not exist "%SCRIPT_DIR%watchdog-service.xml" (
     echo  [ERROR] No se encontró watchdog-service.xml
-    pause
+    if "%SILENT%"=="0" pause
     exit /b 1
 )
 echo        → Todos los archivos encontrados ✓
@@ -92,4 +96,4 @@ echo  ║  Para configurar, ejecute: watchdog-gui.jar                 ║
 echo  ║  Para administrar: services.msc                             ║
 echo  ╚══════════════════════════════════════════════════════════════╝
 echo.
-pause
+if "%SILENT%"=="0" pause
